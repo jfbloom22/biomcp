@@ -7,20 +7,13 @@ use super::{TypedGet, TypedVariantErepo, get_args};
 #[test]
 fn adverse_event_schema_and_mapper_deduplicate_sections_only_for_that_entity() {
     let schema = serde_json::to_value(rmcp::schemars::schema_for!(TypedGet)).unwrap();
-    let branches = schema["oneOf"].as_array().unwrap();
-    let branch = |entity| {
-        branches
-            .iter()
-            .find(|branch| branch["properties"]["entity"]["const"] == entity)
+    assert_eq!(schema["type"], "object");
+    assert!(schema.get("oneOf").is_none());
+    assert!(
+        schema["properties"]["sections"]["items"]["enum"]
+            .as_array()
             .unwrap()
-    };
-    assert_eq!(
-        branch("adverse-event")["properties"]["sections"].get("uniqueItems"),
-        None
-    );
-    assert_eq!(
-        branch("gene")["properties"]["sections"]["uniqueItems"],
-        true
+            .contains(&json!("guidance"))
     );
 
     let args = get_args(TypedGet(json!({

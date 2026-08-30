@@ -280,13 +280,44 @@ fn typed_search_branch(entity: &str) -> Value {
 }
 
 fn typed_search_schema(schema: &mut schemars::Schema) {
-    let branches = [
+    let entities = [
         "author", "gene", "pgx", "gwas", "article", "trial", "variant", "protein",
-    ]
-    .into_iter()
-    .map(typed_search_branch)
-    .collect::<Vec<_>>();
-    *schema = serde_json::from_value(json!({"oneOf":branches})).expect("valid typed search schema");
+    ];
+    let mut properties =
+        serde_json::Map::from_iter([("entity".into(), json!({"type":"string","enum":entities}))]);
+
+    // Keep the public contract to the portable JSON Schema subset used by MCP
+    // clients. Entity-specific constraints are deliberately enforced in
+    // `search_args`, where they produce precise validation errors.
+    for entity in entities {
+        let branch = typed_search_branch(entity);
+        for (name, value) in branch["properties"]
+            .as_object()
+            .expect("typed search branch properties")
+        {
+            if name != "entity" {
+                properties
+                    .entry(name.clone())
+                    .or_insert_with(|| value.clone());
+            }
+        }
+    }
+    // `source` has entity-specific values. Publish their union here and let
+    // the entity-specific validator below reject unsupported combinations.
+    properties.insert(
+        "source".into(),
+        json!({
+            "type":"string",
+            "enum":["all","ctgov","nci","pubtator","europepmc","pubmed","semanticscholar","litsense2"]
+        }),
+    );
+    *schema = serde_json::from_value(json!({
+        "type":"object",
+        "additionalProperties":false,
+        "properties":properties,
+        "required":["entity"]
+    }))
+    .expect("valid portable typed search schema");
 }
 
 fn typed_variant_erepo_schema(schema: &mut schemars::Schema) {
@@ -692,6 +723,11 @@ fn search_args(input: TypedSearch) -> Result<Vec<String>, McpError> {
             continue;
         }
         let field_schema = &allowed[field];
+        if let Some(expected) = field_schema.get("const")
+            && expected != value
+        {
+            return Err(input_error(format!("invalid {field} value")));
+        }
         if let Some(values) = field_schema.get("enum").and_then(Value::as_array)
             && !values.contains(value)
         {
@@ -1595,53 +1631,44 @@ mod tests {
     }
 
     #[test]
-    fn typed_schemas_are_entity_specific() {
+    fn typed_schemas_use_portable_root_objects() {
         let search = serde_json::to_value(rmcp::schemars::schema_for!(TypedSearch)).unwrap();
-        assert_eq!(search["oneOf"].as_array().unwrap().len(), 8);
-        let gwas = search["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|branch| branch["properties"]["entity"]["const"] == "gwas")
-            .unwrap();
-        assert!(gwas["properties"].get("trait").is_some());
-        assert!(gwas["properties"].get("region").is_none());
+        assert_eq!(search["type"], "object");
+        assert!(search.get("oneOf").is_none());
+        assert_eq!(search["properties"]["entity"]["type"], "string");
+        assert!(
+            search["properties"]["entity"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("article"))
+        );
+        assert!(search["properties"].get("keyword").is_some());
+        assert!(search["properties"].get("trait").is_some());
+        assert!(
+            search["properties"]["source"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("pubmed"))
+        );
 
         let get = serde_json::to_value(rmcp::schemars::schema_for!(TypedGet)).unwrap();
-        assert_eq!(get["oneOf"].as_array().unwrap().len(), 12);
-        let author = get["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|branch| branch["properties"]["entity"]["const"] == "author")
-            .unwrap();
-        assert!(author["properties"].get("sections").is_none());
-        let gene = get["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|branch| branch["properties"]["entity"]["const"] == "gene")
-            .unwrap();
+        assert_eq!(get["type"], "object");
+        assert!(get.get("oneOf").is_none());
+        assert_eq!(get["properties"]["entity"]["type"], "string");
         assert!(
-            gene["properties"]["sections"]["items"]["enum"]
+            get["properties"]["sections"]["items"]["enum"]
                 .as_array()
                 .unwrap()
                 .contains(&json!("pathways"))
         );
         assert!(
-            !gene["properties"]["sections"]["items"]["enum"]
+            get["properties"]["sections"]["items"]["enum"]
                 .as_array()
                 .unwrap()
                 .contains(&json!("population"))
         );
-        let variant = get["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|branch| branch["properties"]["entity"]["const"] == "variant")
-            .unwrap();
         assert_eq!(
-            variant["properties"]["assembly"]["enum"],
+            get["properties"]["assembly"]["enum"],
             json!(["grch37", "hg19", "grch38", "hg38"])
         );
     }
@@ -1814,6 +1841,7 @@ mod tests {
             json!({"entity":"gwas","gene":"BRAF","offset":49,"limit":2}),
             json!({"entity":"gene","query":"BRAF","limit":50}),
             json!({"entity":"trial","condition":["x"],"source":"nci","mutation":["a"],"criteria":["b"]}),
+            json!({"entity":"author","query":"Jane Doe","source":"pubmed"}),
         ] {
             assert!(search_args(TypedSearch(input)).is_err());
         }

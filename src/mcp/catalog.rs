@@ -18,12 +18,12 @@ pub(super) const TOOLS: &[ToolCatalogEntry] = &[
     ToolCatalogEntry {
         name: "search",
         title: "BioMCP search",
-        description: "Search one biomedical entity with typed, bounded inputs.",
+        description: "Search one biomedical entity with typed, bounded inputs. Set entity first, then use only fields supported by that entity: article accepts keyword, disease, drug, author, gene, journal, dates, source, and sort; trial accepts condition, intervention, mutation, criteria, biomarker, phase, status, and source. Example article search: entity=article, keyword=[\"breast cancer prevention diet\"], source=pubmed, sort=relevance, limit=10. Invalid entity and field combinations are rejected with an explanation.",
     },
     ToolCatalogEntry {
         name: "get",
         title: "BioMCP get",
-        description: "Get one biomedical record with typed inputs. Binary assets are CLI-only.",
+        description: "Get one biomedical record with typed inputs. Set entity and id. Sections are entity-specific and variant alone accepts assembly. Invalid entity and field combinations are rejected with an explanation. Binary assets are CLI-only.",
     },
     ToolCatalogEntry {
         name: "variant_normalize_car",
